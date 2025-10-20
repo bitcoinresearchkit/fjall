@@ -8,46 +8,19 @@ use lsm_tree::{UserKey, UserValue, ValueType};
 ///
 /// Inner Item
 ///
-pub enum CompactItem<K, V> {
-    /// Value
-    Value {
-        /// Key
-        key: K,
-        /// Value
-        value: V,
-    },
-    /// Tombstone
-    Tombstone(K),
-    /// Weak tombstone
-    WeakTombstone(K),
-}
+pub struct InnerItem {
+    /// User-defined key - an arbitrary byte array
+    ///
+    /// Supports up to 2^16 bytes
+    pub key: UserKey,
 
-impl<K: Ord, V> Ord for CompactItem<K, V> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.key().cmp(other.key())
-    }
-}
+    /// User-defined value - an arbitrary byte array
+    ///
+    /// Supports up to 65535 bytes
+    pub value: UserValue,
 
-impl<K: Ord, V> PartialOrd for CompactItem<K, V> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<K: Eq, V> PartialEq for CompactItem<K, V> {
-    fn eq(&self, other: &Self) -> bool {
-        self.key() == other.key()
-    }
-}
-
-impl<K: Eq, V> Eq for CompactItem<K, V> {}
-
-impl<K, V> CompactItem<K, V> {
-    fn key(&self) -> &K {
-        match self {
-            Self::Value { key, .. } | Self::Tombstone(key) | Self::WeakTombstone(key) => key,
-        }
-    }
+    /// Tombstone marker - if this is true, the value has been deleted
+    pub value_type: ValueType,
 }
 
 #[derive(Clone, PartialEq, Eq)]

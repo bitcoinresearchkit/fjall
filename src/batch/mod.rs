@@ -106,17 +106,13 @@ impl Batch {
     }
 
     ///
-    /// Fast commit
+    /// Commit partition
     ///
-    pub fn commit_partition<K, V>(
+    pub fn commit_partition(
         self,
         partition: &PartitionHandle,
-        items: Vec<CompactItem<K, V>>,
-    ) -> crate::Result<()>
-    where
-        K: Into<ByteView>,
-        V: Into<ByteView>,
-    {
+        items: Vec<InnerItem>,
+    ) -> crate::Result<()> {
         use std::sync::atomic::Ordering;
 
         log::trace!("batch: Acquiring journal writer");
@@ -129,7 +125,8 @@ impl Batch {
 
         let batch_seqno = self.keyspace.seqno.next();
 
-        let _ = journal_writer.write_batch(self.data.iter(), self.data.len(), batch_seqno);
+        let _ =
+            journal_writer.write_partition_batch(partition, items.iter(), items.len(), batch_seqno);
 
         if let Some(mode) = self.durability {
             if let Err(e) = journal_writer.persist(mode) {
@@ -152,14 +149,10 @@ impl Batch {
         log::trace!("Applying {} batched items to memtable(s)", items.len());
 
         for item in items {
-            let (item_size, _) = match item {
-                CompactItem::Value { key, value } => {
-                    partition.tree.insert(key.into(), value.into(), batch_seqno)
-                }
-                CompactItem::Tombstone(key) => partition.tree.remove(key.into(), batch_seqno),
-                CompactItem::WeakTombstone(key) => {
-                    partition.tree.remove_weak(key.into(), batch_seqno)
-                }
+            let (item_size, _) = match item.value_type {
+                ValueType::Value => partition.tree.insert(item.key, item.value, batch_seqno),
+                ValueType::Tombstone => partition.tree.remove(item.key, batch_seqno),
+                ValueType::WeakTombstone => partition.tree.remove_weak(item.key, batch_seqno),
             };
 
             batch_size += u64::from(item_size);

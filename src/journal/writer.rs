@@ -3,7 +3,10 @@
 // (found in the LICENSE-* files in the repository)
 
 use super::marker::{serialize_marker_item, Marker};
-use crate::{batch::item::Item as BatchItem, file::fsync_directory, journal::recovery::JournalId};
+use crate::{
+    batch::item::Item as BatchItem, file::fsync_directory, journal::recovery::JournalId, InnerItem,
+    PartitionHandle,
+};
 use lsm_tree::{coding::Encode, EncodeError, SeqNo, ValueType};
 use std::{
     fs::{File, OpenOptions},
@@ -241,6 +244,58 @@ impl Writer {
         byte_count += self.buf.len();
 
         self.buf.clear();
+        let checksum = hasher.finish();
+        byte_count += self.write_end(checksum)?;
+
+        Ok(byte_count)
+    }
+
+    pub fn write_partition_batch<'a>(
+        &mut self,
+        partition: &'a PartitionHandle,
+        items: impl Iterator<Item = &'a InnerItem>,
+        batch_size: usize,
+        seqno: SeqNo,
+    ) -> crate::Result<usize> {
+        if batch_size == 0 {
+            return Ok(0);
+        }
+
+        self.is_buffer_dirty = true;
+
+        self.buf.clear();
+
+        // NOTE: entries.len() is surely never > u32::MAX
+        #[allow(clippy::cast_possible_truncation)]
+        let item_count = batch_size as u32;
+
+        let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+        let mut byte_count = 0;
+
+        byte_count += self.write_start(item_count, seqno)?;
+        self.buf.clear();
+
+        let partition = partition.name.clone();
+
+        for item in items {
+            debug_assert!(self.buf.is_empty());
+
+            serialize_marker_item(
+                &mut self.buf,
+                &partition,
+                &item.key,
+                &item.value,
+                item.value_type,
+            )?;
+
+            self.file.write_all(&self.buf)?;
+
+            hasher.update(&self.buf);
+            byte_count += self.buf.len();
+
+            self.buf.clear();
+        }
+
         let checksum = hasher.finish();
         byte_count += self.write_end(checksum)?;
 

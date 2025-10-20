@@ -120,7 +120,7 @@ pub(crate) type HashMap<K, V> = std::collections::HashMap<K, V, xxhash_rust::xxh
 pub(crate) type HashSet<K> = std::collections::HashSet<K, xxhash_rust::xxh3::Xxh3Builder>;
 
 pub use {
-    batch::{Batch, CompactItem},
+    batch::{Batch, InnerItem},
     config::Config,
     error::{Error, Result},
     gc::GarbageCollection,
@@ -171,7 +171,9 @@ pub type LsmError = lsm_tree::Error;
 #[doc(hidden)]
 pub use lsm_tree::AbstractTree;
 
-pub use lsm_tree::{AnyTree, CompressionType, KvPair, Slice, TreeType, UserKey, UserValue};
+pub use lsm_tree::{
+    AnyTree, CompressionType, KvPair, Slice, TreeType, UserKey, UserValue, ValueType,
+};
 
 // TODO: remove in V3
 
