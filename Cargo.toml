@@ -1,5 +1,5 @@
 [package]
-name = "fjall"
+name = "brk_fjall"
 description = "Log-structured, embeddable key-value storage engine"
 license = "MIT OR Apache-2.0"
 version = "2.11.3"

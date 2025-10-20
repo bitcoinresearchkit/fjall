@@ -5,7 +5,8 @@
 pub mod item;
 
 use crate::{Keyspace, PartitionHandle, PersistMode};
-use item::Item;
+use byteview::ByteView;
+pub use item::*;
 use lsm_tree::{AbstractTree, UserKey, UserValue, ValueType};
 use std::collections::HashSet;
 
@@ -102,6 +103,95 @@ impl Batch {
             vec![],
             ValueType::WeakTombstone,
         ));
+    }
+
+    ///
+    /// Fast commit
+    ///
+    pub fn commit_partition<K, V>(
+        self,
+        partition: &PartitionHandle,
+        items: Vec<CompactItem<K, V>>,
+    ) -> crate::Result<()>
+    where
+        K: Into<ByteView>,
+        V: Into<ByteView>,
+    {
+        use std::sync::atomic::Ordering;
+
+        log::trace!("batch: Acquiring journal writer");
+        let mut journal_writer = self.keyspace.journal.get_writer();
+
+        // IMPORTANT: Check the poisoned flag after getting journal mutex, otherwise TOCTOU
+        if self.keyspace.is_poisoned.load(Ordering::Relaxed) {
+            return Err(crate::Error::Poisoned);
+        }
+
+        let batch_seqno = self.keyspace.seqno.next();
+
+        let _ = journal_writer.write_batch(self.data.iter(), self.data.len(), batch_seqno);
+
+        if let Some(mode) = self.durability {
+            if let Err(e) = journal_writer.persist(mode) {
+                self.keyspace.is_poisoned.store(true, Ordering::Release);
+
+                log::error!(
+                    "persist failed, which is a FATAL, and possibly hardware-related, failure: {e:?}"
+                );
+
+                return Err(crate::Error::Poisoned);
+            }
+        }
+
+        #[allow(clippy::mutable_key_type)]
+        let mut partitions_with_possible_stall = HashSet::new();
+        partitions_with_possible_stall.insert(partition.clone());
+
+        let mut batch_size = 0u64;
+
+        log::trace!("Applying {} batched items to memtable(s)", items.len());
+
+        for item in items {
+            let (item_size, _) = match item {
+                CompactItem::Value { key, value } => {
+                    partition.tree.insert(key.into(), value.into(), batch_seqno)
+                }
+                CompactItem::Tombstone(key) => partition.tree.remove(key.into(), batch_seqno),
+                CompactItem::WeakTombstone(key) => {
+                    partition.tree.remove_weak(key.into(), batch_seqno)
+                }
+            };
+
+            batch_size += u64::from(item_size);
+        }
+
+        self.keyspace
+            .visible_seqno
+            .fetch_max(batch_seqno + 1, Ordering::AcqRel);
+
+        drop(journal_writer);
+
+        log::trace!("batch: Freed journal writer");
+
+        // IMPORTANT: Add batch size to current write buffer size
+        // Otherwise write buffer growth is unbounded when using batches
+        self.keyspace.write_buffer_manager.allocate(batch_size);
+
+        // Check each affected partition for write stall/halt
+        for partition in partitions_with_possible_stall {
+            let memtable_size = partition.tree.active_memtable_size();
+
+            if let Err(e) = partition.check_memtable_overflow(memtable_size) {
+                log::error!("Failed memtable rotate check: {e:?}");
+            }
+
+            // IMPORTANT: Check write buffer as well
+            // Otherwise batch writes are never stalled/halted
+            let write_buffer_size = self.keyspace.write_buffer_manager.get();
+            partition.check_write_buffer_size(write_buffer_size);
+        }
+
+        Ok(())
     }
 
     /// Commits the batch to the [`Keyspace`] atomically.

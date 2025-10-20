@@ -120,7 +120,7 @@ pub(crate) type HashMap<K, V> = std::collections::HashMap<K, V, xxhash_rust::xxh
 pub(crate) type HashSet<K> = std::collections::HashSet<K, xxhash_rust::xxh3::Xxh3Builder>;
 
 pub use {
-    batch::Batch,
+    batch::{Batch, CompactItem},
     config::Config,
     error::{Error, Result},
     gc::GarbageCollection,

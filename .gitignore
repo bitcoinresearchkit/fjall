@@ -24,3 +24,5 @@ Cargo.lock
 .test
 
 segment_history.jsonl
+
+.DS_Store

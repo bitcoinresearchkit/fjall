@@ -5,6 +5,51 @@
 use super::PartitionKey;
 use lsm_tree::{UserKey, UserValue, ValueType};
 
+///
+/// Inner Item
+///
+pub enum CompactItem<K, V> {
+    /// Value
+    Value {
+        /// Key
+        key: K,
+        /// Value
+        value: V,
+    },
+    /// Tombstone
+    Tombstone(K),
+    /// Weak tombstone
+    WeakTombstone(K),
+}
+
+impl<K: Ord, V> Ord for CompactItem<K, V> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key().cmp(other.key())
+    }
+}
+
+impl<K: Ord, V> PartialOrd for CompactItem<K, V> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<K: Eq, V> PartialEq for CompactItem<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.key() == other.key()
+    }
+}
+
+impl<K: Eq, V> Eq for CompactItem<K, V> {}
+
+impl<K, V> CompactItem<K, V> {
+    fn key(&self) -> &K {
+        match self {
+            Self::Value { key, .. } | Self::Tombstone(key) | Self::WeakTombstone(key) => key,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct Item {
     /// Partition key - an arbitrary byte array
@@ -44,6 +89,9 @@ impl std::fmt::Debug for Item {
 }
 
 impl Item {
+    ///
+    /// New item
+    ///
     pub fn new<P: Into<PartitionKey>, K: Into<UserKey>, V: Into<UserValue>>(
         partition: P,
         key: K,
